@@ -1,0 +1,99 @@
+services:
+  grpc:
+    container_name: ${APP_NAME}-grpc
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - workdir=cmd/grpc
+    environment:
+      PORT: 9090
+      OTLP_ENDPOINT: otel-collector:4317
+      SERVICE_NAME: grpc
+    volumes:
+      - ../:/app
+    logging:
+      driver: loki
+      options: 
+        loki-url: http://127.0.0.1:3100/loki/api/v1/push
+    restart: always
+  api:
+    container_name: ${APP_NAME}-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - workdir=cmd/api
+    ports:
+      - 8080:8080
+    environment:
+      ENV: local
+      PORT: 8080
+      OTLP_ENDPOINT: otel-collector:4317
+      SERVICE_NAME: api
+      GRPC_ENDPOINT: grpc:9090
+    volumes:
+      - ../:/app
+    logging:
+      driver: loki
+      options: 
+        loki-url: http://127.0.0.1:3100/loki/api/v1/push
+    restart: always
+
+  jaeger-all-in-one:
+    container_name: ${APP_NAME}-jaeger
+    image: jaegertracing/all-in-one:latest
+    restart: always
+    ports:
+      - 16686:16686
+  otel-collector:
+    container_name: ${APP_NAME}-otel-collector
+    image: otel/opentelemetry-collector-contrib:latest
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+    ports:
+      - 13133:13133 # health_check extension
+      - 4317:4317 # OTLP gRPC receiver
+
+# ref: https://grafana.com/docs/loki/latest/send-data/docker-driver/
+# need: docker plugin install grafana/loki-docker-driver:2.9.2 --alias loki --grant-all-permissions
+  loki:
+    container_name: ${APP_NAME}-loki
+    image: grafana/loki:2.9.2
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+  promtail:
+    container_name: ${APP_NAME}-promtail
+    image: grafana/promtail:2.9.2
+    volumes:
+      - /var/log:/var/log
+    command: -config.file=/etc/promtail/config.yml
+  grafana:
+    container_name: ${APP_NAME}-grafana
+    image: grafana/grafana:latest
+    environment:
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    entrypoint:
+      - sh
+      - -euc
+      - |
+        mkdir -p /etc/grafana/provisioning/datasources
+        cat <<EOF > /etc/grafana/provisioning/datasources/ds.yaml
+        apiVersion: 1
+        datasources:
+        - name: Loki
+          type: loki
+          access: proxy 
+          orgId: 1
+          url: http://loki:3100
+          basicAuth: false
+          isDefault: true
+          version: 1
+          editable: false
+        EOF
+        /run.sh
+    ports:
+      - "3000:3000"
