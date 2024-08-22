@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/pubsub"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -52,7 +53,14 @@ func main() {
 		}
 	}()
 
-	hdl := NewHandler(conn)
+	pubsubClient, err := pubsub.NewClientWithConfig(context.Background(), os.Getenv("GOOGLE_PROJECT_ID"), &pubsub.ClientConfig{
+		EnableOpenTelemetryTracing: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	hdl := NewHandler(conn, pubsubClient)
 
 	mux := http.NewServeMux()
 
@@ -92,18 +100,21 @@ func main() {
 }
 
 type Handler struct {
-	restclient *http.Client
-	grpclient  healthpb.HealthClient
+	restclient   *http.Client
+	grpclient    healthpb.HealthClient
+	pubsubClient *pubsub.Client
 }
 
 func NewHandler(
 	conn *grpc.ClientConn,
+	pubsubClient *pubsub.Client,
 ) *Handler {
 	grpcclient := healthpb.NewHealthClient(conn)
 
 	return &Handler{
-		restclient: &http.Client{},
-		grpclient:  grpcclient,
+		restclient:   &http.Client{},
+		grpclient:    grpcclient,
+		pubsubClient: pubsubClient,
 	}
 }
 
@@ -126,6 +137,26 @@ func (hdl *Handler) Health(
 		http.Error(rw, "Internal Server Error", http.StatusInternalServerError)
 
 		return
+	}
+
+	topic := hdl.pubsubClient.Topic(os.Getenv("PUBSUB_TOPIC_ID"))
+
+	if ok, err := topic.Exists(ctx); err != nil {
+		slog.ErrorContext(req.Context(), "failed to check pubsub topic. error: "+err.Error())
+
+		http.Error(rw, "Internal Server Error", http.StatusInternalServerError)
+	} else if !ok {
+		slog.ErrorContext(req.Context(), "pubsub topic not exists")
+
+		http.Error(rw, "Internal Server Error", http.StatusInternalServerError)
+	}
+
+	if _, err := topic.Publish(ctx, &pubsub.Message{
+		Data: []byte("health check"),
+	}).Get(ctx); err != nil {
+		slog.ErrorContext(req.Context(), "failed to publish message to pubsub topic. error: "+err.Error())
+
+		http.Error(rw, "Internal Server Error", http.StatusInternalServerError)
 	}
 
 	fmt.Fprintf(rw, "OK")

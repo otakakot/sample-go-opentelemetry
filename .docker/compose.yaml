@@ -1,4 +1,10 @@
 services:
+  pubsub:
+    container_name: ${APP_NAME}-pubsub
+    image: asia.gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
+    command: gcloud beta emulators pubsub start --quiet --project=local-project --host-port=0.0.0.0:8086
+    restart: always
+
   grpc:
     container_name: ${APP_NAME}-grpc
     build:
@@ -32,6 +38,9 @@ services:
       OTLP_ENDPOINT: otel-collector:4317
       SERVICE_NAME: api
       GRPC_ENDPOINT: grpc:9090
+      PUBSUB_EMULATOR_HOST: pubsub:8086
+      GOOGLE_PROJECT_ID: local-project
+      PUBSUB_TOPIC_ID: local-topic
     volumes:
       - ../:/app
     logging:
@@ -39,6 +48,29 @@ services:
       options: 
         loki-url: http://127.0.0.1:3100/loki/api/v1/push
     restart: always
+  mq:
+    container_name: ${APP_NAME}-mq
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - workdir=cmd/mq
+    environment:
+      OTLP_ENDPOINT: otel-collector:4317
+      SERVICE_NAME: mq
+      PUBSUB_EMULATOR_HOST: pubsub:8086
+      GOOGLE_PROJECT_ID: local-project
+      PUBSUB_TOPIC_ID: local-topic
+      PUBSUB_SUBSCRIPTION_ID: local-subscription
+    volumes:
+      - ../:/app
+    logging:
+      driver: loki
+      options: 
+        loki-url: http://127.0.0.1:3100/loki/api/v1/push
+    restart: always
+    depends_on:
+      - pubsub
 
   jaeger-all-in-one:
     container_name: ${APP_NAME}-jaeger

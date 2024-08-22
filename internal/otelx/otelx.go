@@ -33,7 +33,7 @@ func Setup() error {
 
 	otel.SetTracerProvider(tp)
 
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}))
 
 	return nil
 }

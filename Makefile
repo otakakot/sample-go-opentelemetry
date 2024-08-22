@@ -16,6 +16,7 @@ down: ## stop the server
 	@docker compose --project-name ${APP_NAME} down --volumes
 	@docker rmi ${APP_NAME}-api
 	@docker rmi ${APP_NAME}-grpc
+	@docker rmi ${APP_NAME}-mq
 
 .PHONY: mod
 mod: ## go mod tidy & go mod vendor
